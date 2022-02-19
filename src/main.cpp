@@ -43,7 +43,7 @@ int presence;
 int heure;
 int heureLightFin;
 int heureLightDebut;
-int lidarDistanceMax;
+int lidarDistanceMax = 900;
 int cleanSensorMax;
 int dirtySensorMax;
 int duringWaterOn = 30;
@@ -291,6 +291,7 @@ void detect()
   {
     status = 1;
     presence = 1;
+    Serial.println("Y a quelque chose");
   }
   else
   {
@@ -343,7 +344,7 @@ void read_dual_sensors()
   if (measure1.RangeStatus != 4)
   { // if not out of range
     sensor1 = measure1.RangeMilliMeter;
-    Serial.print(sensor1);
+    // Serial.print(sensor1);
   }
   else
   {
@@ -351,20 +352,17 @@ void read_dual_sensors()
     Serial.print("Out of range");
   }
 
-  Serial.print(" ");
-
   // print sensor two reading
   if (measure2.RangeStatus != 4)
   {
     sensor2 = measure2.RangeMilliMeter;
-    Serial.print(sensor2);
+    // Serial.print(sensor2);
   }
   else
   {
     sensor2 = lidarDistanceMax;
     Serial.print("Out of range");
   }
-  Serial.println();
 }
 
 void waterSensor()
