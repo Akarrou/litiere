@@ -35,6 +35,12 @@
         function onVidange(xhttp) {
             document.getElementById("vidange").innerHTML = "Vidange " + xhttp.responseText;
         }
+
+        function DisplayChange(newvalue) {
+            document.getElementById(
+                "value").innerHTML = newvalue;
+            appelServeur('/duringWater?setDuringWaterOn=' + newvalue, onNettoyage);
+        }
     </script>
 </head>
 
@@ -51,10 +57,10 @@
             <div class="d-flex flex-column mb-3 align-items-center">
                 <label for="vidange" class="form-label">Vidange des eaux sales</label>
                 <div class=" d-flex justify-content-around">
-                    <button class="btn btn-primary m-2" onclick="appelServeur('/nettoyage?onOffVidange=1', onVidange)">
+                    <button class="btn btn-primary m-2" onclick="appelServeur('/vidange?onOffVidange=1', onVidange)">
                         Vidange On
                     </button>
-                    <button class="btn btn-primary  m-2" onclick="appelServeur('/nettoyage?onOffVidange=O', onVidange)">
+                    <button class="btn btn-primary  m-2" onclick="appelServeur('/vidange?onOffVidange=O', onVidange)">
                         Vidange Off
                     </button>
                 </div>
@@ -64,18 +70,27 @@
                 <label for="nettoyage" class="form-label">Nettoyage de la litière</label>
                 <div class=" d-flex justify-content-around">
                     <button class="btn btn-primary m-2"
-                        onclick="appelServeur('/nettoyage?onOffNettoyage=1', onNettoyage,'nettoyage')">
+                        onclick="appelServeur('/nettoyage?onOffNettoyage=1', onNettoyage)">
                         Nettoyage On
                     </button>
                     <button class="btn btn-primary  m-2"
-                        onclick="appelServeur('/nettoyage?onOffNettoyage=O', onNettoyage,'nettoyage')">
+                        onclick="appelServeur('/nettoyage?onOffNettoyage=O', onNettoyage)">
                         Nettoyage Off
                     </button>
                 </div>
                 <P id="nettoyage"></P>
             </div>
+            <div class="d-flex flex-column mb-3 align-items-center">
+                <label for="duringWaterOn" class="form-label">Temps de nettoyage</label>
+                <div class=" d-flex justify-content-around">
+                    <input type="range" class="form-range" oninput="DisplayChange(this.value)" min="5" max="120"
+                        step="1" id="duringWaterOnInput">
+                </div>
+                <span id="value"></span>
+            </div>
         </div>
     </div>
+
 </body>
 
 </html>

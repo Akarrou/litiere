@@ -95,7 +95,7 @@ void setup()
   webServer.on("/nettoyage", onNettoyage);
   webServer.on("/stop", onStopChange);
   webServer.on("/vidange", onVidangeChange);
-    webServer.on("/duringWater", setDuringWaterOn);
+  webServer.on("/duringWater", setDuringWaterOn);
 
   webServer.begin();
 
