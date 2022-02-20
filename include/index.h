@@ -38,18 +38,28 @@ const char index_html[] PROGMEM = R"=====(
             document.getElementById("vidange").innerHTML = "Vidange " + xhttp.responseText;
         }
 
-        function DisplayChange(newvalue) {
-            document.getElementById(
-                "value").innerHTML = newvalue;
-            appelServeur('/duringWater?setDuringWaterOn=' + newvalue, onNettoyage);
-        }
     </script>
 </head>
 
-<body>
+<body onload="init()">
     <div class="container d-flex flex-column mb-3 align-items-center justify-content-center">
         <h3>Gestion de la litière</h3>
         <div class="col-4">
+            <div class="d-flex flex-column mb-3 align-items-center">
+                <span>Status</span>
+                <h1 id="status">0</h1>
+                <div class="d-flex">
+                    <div class="d-flex flex-column m-3 align-items-center">
+                        <span>Sensor 1</span>
+                        <h2 id="sensor1">0</h2>
+                    </div>
+                    <div class="d-flex flex-column m-3 align-items-center">
+                        <span>Sensor 2</span>
+                        <h2 id="sensor2">0</h2>
+                    </div>
+                </div>
+            </div>
+
             <div class="d-flex flex-column mb-3 align-items-center">
                 <label for="stop" class="form-label">Arrêt de tout</label>
                 <button class="btn btn-primary" id="stop" onclick="appelServeur('/stop', stop)">
@@ -83,15 +93,51 @@ const char index_html[] PROGMEM = R"=====(
                 <P id="nettoyage"></P>
             </div>
             <div class="d-flex flex-column mb-3 align-items-center">
-                <label for="duringWaterOn" class="form-label">Temps de nettoyage</label>
-                <div class=" d-flex justify-content-around">
-                    <input type="range" class="form-range" oninput="DisplayChange(this.value)" min="5" max="120"
-                        step="1" id="duringWaterOnInput">
+                <h2 id="status">Reglage</h2>
+                <div class="d-flex">
+                    <div class="d-flex flex-column m-3 align-items-center">
+                        <span>Sensor max</span>
+                        <span id="sensorMaxvalue">0</span>
+                        <input type="range" id="sensorMax" min="100" max="1000" step="10"
+                            oninput="sensorMaxvalueChange(this.value)">
+                    </div>
+                    <div class="d-flex flex-column m-3 align-items-center">
+                        <span>Temps de nettoyage</span>
+                        <span id="tempMaxvalue">0</span>
+                        <input type="range" id="tempMax" min="10" max="240" step="30"
+                            oninput="tempMaxvalueChange(this.value)">
+                    </div>
                 </div>
-                <span id="value"></span>
             </div>
         </div>
     </div>
+
+    <script>
+        var webSocket;
+        function init() {
+            webSocket = new WebSocket('ws://' + window.location.hostname + ':81/');
+            webSocket.onmessage = function (event) {
+                var data = JSON.parse(event.data);
+                document.getElementById("status").innerHTML = data.status
+                document.getElementById("sensor1").innerHTML = data.lidar[0]
+                document.getElementById("sensor2").innerHTML = data.lidar[1]
+                document.getElementById("sensorMaxvalue").innerHTML = data.lidarDistanceMax
+                document.getElementById("tempMaxvalue").innerHTML = data.duringWaterOn
+                document.getElementById("sensorMax").value = data.lidarDistanceMax
+                document.getElementById("tempMax").value = data.duringWaterOn
+                console.log(data)
+            }
+        }
+        function sensorMaxvalueChange(newvalue) {
+            document.getElementById("sensorMaxvalue").innerHTML = newvalue;
+            webSocket.send(JSON.stringify({ sensorMaxvalue: newvalue }))
+        }
+
+        function tempMaxvalueChange(newvalue) {
+            document.getElementById("tempMaxvalue").innerHTML = newvalue;
+            webSocket.send(JSON.stringify({ tempMaxvalue: newvalue }))
+        }
+    </script>
 
 </body>
 

@@ -1,12 +1,15 @@
 #include "Arduino.h"
 #include "ESP8266WiFi.h"
 #include <ESP8266WebServer.h>
+#include <WebSocketsServer.h>
 #include <Adafruit_VL53L0X.h>
 #include <RBD_Capacitance.h>
 #include <RBD_Threshold.h>
 #include <RBD_WaterSensor.h>
 #include "ArduinoOTA.h"
 #include <NTPClient.h>
+#include <Ticker.h>
+#include <ArduinoJson.h>
 #include <index.h>
 
 // Gestion des événements du WiFi
@@ -17,6 +20,11 @@ void onGotIP(const WiFiEventStationModeGotIP &event);
 ESP8266WebServer webServer(80);
 
 RBD::WaterSensor water_sensor(13, 15, 15); // send, receive pin, levels
+
+Ticker timer;
+Ticker timer2;
+
+WebSocketsServer webSocket = WebSocketsServer(81);
 
 // Relais
 #define RELAY_NETOYER 0
@@ -66,6 +74,8 @@ void onStopChange();
 void onVidangeChange();
 void onNettoyage();
 void setDuringWaterOn();
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length);
+void getData();
 
 // NTPClient horloge
 WiFiUDP ntpUDP;
@@ -127,6 +137,12 @@ void setup()
   Serial.println("Both in reset mode...(pins are low)");
   Serial.println("Starting...");
   setID();
+  // read data toute les 5 seconde
+
+  timer.attach(1, getData);
+  timer2.attach(5, waterSensor);
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
 }
 
 void loop()
@@ -143,10 +159,8 @@ void loop()
   heure = timeClient.getHours(); // heure
   delay(10);
   read_dual_sensors();
-  delay(10);
-  detect();
-  delay(10);
-  waterSensor();
+
+  webSocket.loop();
 
   if (heure == heureLightDebut)
   {
@@ -344,25 +358,23 @@ void read_dual_sensors()
   if (measure1.RangeStatus != 4)
   { // if not out of range
     sensor1 = measure1.RangeMilliMeter;
-    // Serial.print(sensor1);
   }
   else
   {
-    sensor1 = lidarDistanceMax;
-    Serial.print("Out of range");
+    Serial.print("Out of range sensor 1");
   }
 
   // print sensor two reading
   if (measure2.RangeStatus != 4)
   {
     sensor2 = measure2.RangeMilliMeter;
-    // Serial.print(sensor2);
   }
   else
   {
-    sensor2 = lidarDistanceMax;
-    Serial.print("Out of range");
+    Serial.print("Out of range sensor 2");
   }
+
+  detect();
 }
 
 void waterSensor()
@@ -377,4 +389,58 @@ void waterSensor()
   // Serial.print("  ---  ");
   // Serial.print("Raw Value: ");
   // Serial.println(water_sensor.getRawValue());
+}
+
+void getData()
+{
+  const uint8_t size = JSON_OBJECT_SIZE(200);
+  StaticJsonDocument<size> json;
+  json["status"] = status;
+  json["duringWaterOn"] = duringWaterOn;
+  json["lidarDistanceMax"] = lidarDistanceMax;
+
+  JsonArray data = json.createNestedArray("lidar");
+  data.add(sensor1);
+  data.add(sensor2);
+
+  char buffer[200];
+  size_t len = serializeJson(json, buffer);
+  webSocket.broadcastTXT(buffer, len);
+}
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
+{
+  switch (type)
+  {
+  case WStype_DISCONNECTED:
+
+    break;
+  case WStype_CONNECTED:
+  {
+  }
+  break;
+  case WStype_TEXT:
+    StaticJsonDocument<200> doc;
+    DeserializationError error = deserializeJson(doc, payload);
+    if (error)
+    {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.f_str());
+      return;
+    }
+    timer.detach();
+    int tempMaxvalue = doc["tempMaxvalue"];
+    int sensorMaxvalue = doc["sensorMaxvalue"];
+
+    if (tempMaxvalue > 0)
+    {
+      duringWaterOn = tempMaxvalue;
+    }
+    if (sensorMaxvalue > 0)
+    {
+      lidarDistanceMax = sensorMaxvalue;
+    }
+    timer.attach(1, getData);
+    break;
+  }
 }
