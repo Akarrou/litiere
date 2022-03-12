@@ -51,7 +51,8 @@ int presence;
 int heure;
 int heureLightFin;
 int heureLightDebut;
-int lidarDistanceMax = 900;
+int lidarDistanceMaxSensor1 = 900;
+int lidarDistanceMaxSensor2 = 900;
 int cleanSensorMax;
 int dirtySensorMax;
 int duringWaterOn = 30;
@@ -117,8 +118,8 @@ void setup()
 
   pinMode(RELAY_NETOYER, OUTPUT);
   pinMode(RELAY_VIDANGE, OUTPUT);
-  digitalWrite(RELAY_NETOYER, LOW);
-  digitalWrite(RELAY_VIDANGE, LOW);
+  digitalWrite(RELAY_NETOYER, HIGH);
+  digitalWrite(RELAY_VIDANGE, HIGH);
 
   // wait until serial port opens for native USB devices
   while (!Serial)
@@ -139,7 +140,7 @@ void setup()
   setID();
   // read data toute les 5 seconde
 
-  timer.attach(1, getData);
+  timer.attach(2, read_dual_sensors);
   timer2.attach(5, waterSensor);
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
@@ -158,8 +159,8 @@ void loop()
   delay(10);
   heure = timeClient.getHours(); // heure
   delay(10);
-  read_dual_sensors();
-
+  // read_dual_sensors();
+  getData();
   webSocket.loop();
 
   if (heure == heureLightDebut)
@@ -196,13 +197,13 @@ void loop()
       if (((millis() / 1000) - TEMPCHASSE) < duringWaterOn)
       {
         Serial.println("Chasse ON");
-        digitalWrite(RELAY_NETOYER, HIGH);
+        digitalWrite(RELAY_NETOYER, LOW);
         delay(10);
       }
       else
       {
         Serial.println("Chasse OFF");
-        digitalWrite(RELAY_NETOYER, LOW);
+        digitalWrite(RELAY_NETOYER, HIGH);
         TEMPCHASSE = 0;
         status = 0;
         delay(10);
@@ -210,12 +211,11 @@ void loop()
     }
     else
     {
-      digitalWrite(RELAY_NETOYER, LOW);
+      digitalWrite(RELAY_NETOYER, HIGH);
       TEMPCHASSE = 0;
       delay(50);
     }
   }
-  delay(300);
 
   // ArduinoOTA...
   ArduinoOTA.handle();
@@ -246,7 +246,7 @@ void onNettoyage()
   {
     digitalWrite(RELAY_NETOYER, webServer.arg("onOffNettoyage").toInt());
     delay(50);
-    if (webServer.arg("onOffNettoyage").toInt() == true)
+    if (webServer.arg("onOffNettoyage").toInt() == false)
     {
       webServer.send(200, "text/html", "On");
       manuel = 1;
@@ -266,8 +266,8 @@ void onStopChange()
   TOP_CHRONO = 0;
   manuel = 0;
   presence = 0;
-  digitalWrite(RELAY_NETOYER, LOW);
-  digitalWrite(RELAY_VIDANGE, LOW);
+  digitalWrite(RELAY_NETOYER, HIGH);
+  digitalWrite(RELAY_VIDANGE, HIGH);
   delay(50);
   webServer.send(200, "text/plain", "Stop");
 }
@@ -301,7 +301,8 @@ void setDuringWaterOn()
 
 void detect()
 {
-  if (sensor1 < lidarDistanceMax || sensor2 < lidarDistanceMax)
+
+  if (sensor1 < lidarDistanceMaxSensor1 || sensor2 < lidarDistanceMaxSensor2)
   {
     status = 1;
     presence = 1;
@@ -324,7 +325,7 @@ void setID()
   digitalWrite(SHT_LOX2, HIGH);
   delay(10);
 
-  // activating LOX1 and reseting LOX2
+  // activating LOX1 and resetting LOX2
   digitalWrite(SHT_LOX1, HIGH);
   digitalWrite(SHT_LOX2, LOW);
 
@@ -352,28 +353,19 @@ void setID()
 
 void read_dual_sensors()
 {
-  lox1.rangingTest(&measure1, false); // pass in 'true' to get debug data printout!
-  lox2.rangingTest(&measure2, false); // pass in 'true' to get debug data printout!
+  lox1.rangingTest(&measure1, true); // pass in 'true' to get debug data printout!
+  lox2.rangingTest(&measure2, true); // pass in 'true' to get debug data printout!
   // print sensor one reading
   if (measure1.RangeStatus != 4)
-  { // if not out of range
+  {
     sensor1 = measure1.RangeMilliMeter;
   }
-  else
-  {
-    Serial.print("Out of range sensor 1");
-  }
 
-  // print sensor two reading
   if (measure2.RangeStatus != 4)
   {
     sensor2 = measure2.RangeMilliMeter;
   }
-  else
-  {
-    Serial.print("Out of range sensor 2");
-  }
-
+  delay(10);
   detect();
 }
 
@@ -397,8 +389,8 @@ void getData()
   StaticJsonDocument<size> json;
   json["status"] = status;
   json["duringWaterOn"] = duringWaterOn;
-  json["lidarDistanceMax"] = lidarDistanceMax;
-
+  json["lidarDistanceMaxSensor1"] = lidarDistanceMaxSensor1;
+  json["lidarDistanceMaxSensor2"] = lidarDistanceMaxSensor2;
   JsonArray data = json.createNestedArray("lidar");
   data.add(sensor1);
   data.add(sensor2);
@@ -430,15 +422,20 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
     }
     timer.detach();
     int tempMaxvalue = doc["tempMaxvalue"];
-    int sensorMaxvalue = doc["sensorMaxvalue"];
+    int sensor1Maxvalue = doc["sensor1Maxvalue"];
+    int sensor2Maxvalue = doc["sensor2Maxvalue"];
 
     if (tempMaxvalue > 0)
     {
       duringWaterOn = tempMaxvalue;
     }
-    if (sensorMaxvalue > 0)
+    if (sensor1Maxvalue > 0)
     {
-      lidarDistanceMax = sensorMaxvalue;
+      lidarDistanceMaxSensor1 = sensor1Maxvalue;
+    }
+    if (sensor2Maxvalue > 0)
+    {
+      lidarDistanceMaxSensor2 = sensor2Maxvalue;
     }
     timer.attach(1, getData);
     break;
