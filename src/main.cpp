@@ -10,7 +10,10 @@
 #include <NTPClient.h>
 #include <Ticker.h>
 #include <ArduinoJson.h>
+#include "MedianFilterLib.h"
 #include <index.h>
+
+MedianFilter<int> medianFilter(5);
 
 // Gestion des événements du WiFi
 const char *SSID = "Livebox-5576";
@@ -140,7 +143,7 @@ void setup()
   setID();
   // read data toute les 5 seconde
 
-  timer.attach(2, read_dual_sensors);
+  // timer.attach(1, getData);
   timer2.attach(5, waterSensor);
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
@@ -159,7 +162,7 @@ void loop()
   delay(10);
   heure = timeClient.getHours(); // heure
   delay(10);
-  // read_dual_sensors();
+  read_dual_sensors();
   getData();
   webSocket.loop();
 
@@ -353,20 +356,20 @@ void setID()
 
 void read_dual_sensors()
 {
-  lox1.rangingTest(&measure1, true); // pass in 'true' to get debug data printout!
-  lox2.rangingTest(&measure2, true); // pass in 'true' to get debug data printout!
+  lox1.rangingTest(&measure1, false); // pass in 'true' to get debug data printout!
+  lox2.rangingTest(&measure2, false); // pass in 'true' to get debug data printout!
   // print sensor one reading
   if (measure1.RangeStatus != 4)
   {
-    sensor1 = measure1.RangeMilliMeter;
+    sensor1 = medianFilter.AddValue(measure1.RangeMilliMeter);
+    detect();
   }
 
   if (measure2.RangeStatus != 4)
   {
-    sensor2 = measure2.RangeMilliMeter;
+    sensor2 = medianFilter.AddValue(measure2.RangeMilliMeter);
+    detect();
   }
-  delay(10);
-  detect();
 }
 
 void waterSensor()
@@ -420,7 +423,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
       Serial.println(error.f_str());
       return;
     }
-    timer.detach();
+    // timer.detach();
     int tempMaxvalue = doc["tempMaxvalue"];
     int sensor1Maxvalue = doc["sensor1Maxvalue"];
     int sensor2Maxvalue = doc["sensor2Maxvalue"];
@@ -437,7 +440,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
     {
       lidarDistanceMaxSensor2 = sensor2Maxvalue;
     }
-    timer.attach(1, getData);
+    // timer.attach(1, getData);
     break;
   }
 }
