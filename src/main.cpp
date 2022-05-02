@@ -12,6 +12,8 @@
 #include <ArduinoJson.h>
 #include "MedianFilterLib.h"
 #include <index.h>
+#include <ESP_EEPROM.h>
+#include <ESP_Mail_Client.h>
 
 MedianFilter<int> medianFilter(5);
 
@@ -22,13 +24,11 @@ void onConnected(const WiFiEventStationModeConnected &event);
 void onGotIP(const WiFiEventStationModeGotIP &event);
 ESP8266WebServer webServer(80);
 
-RBD::WaterSensor water_sensor(13, 15, 15); // send, receive pin, levels
-
-Ticker timer;
-Ticker timer2;
+RBD::WaterSensor water_sensor(13, 15, 3); // send, receive pin, levels
 
 WebSocketsServer webSocket = WebSocketsServer(81);
-
+// Memory
+#define EEPROM_SIZE 16
 // Relais
 #define RELAY_NETOYER 0
 #define RELAY_VIDANGE 2
@@ -40,14 +40,25 @@ int sensor1, sensor2 = 1;
 // set the pins to shutdown
 #define SHT_LOX1 16
 #define SHT_LOX2 12
-// Led Red and Green
-#define led_red 14
-#define led_green 10
+
+// identification du compte email utilisé pour l'envoi
+#define SMTP_HOST "smtp.gmail.com"
+#define SMTP_PORT 465
+#define AUTHOR_EMAIL "valettejerome31@gmail.com"
+#define AUTHOR_PASSWORD "Hyna.321"
+
+// identification du destinataire
+#define RECIPIENT_NAME "jerome valette"
+#define RECIPIENT_EMAIL "jeromevalette@orange.fr"
+#define EMAIL_TITLE "Alerte eau"
+
+SMTPSession smtp;
 
 const int TEMPO = 60;
 int manuel = 0;
+boolean alert = false;
 long TOP_CHRONO = 0;
-long TEMPCHASSE = 0;
+unsigned long TEMPCHASSE = 0;
 int sensible;
 int status;
 int presence;
@@ -58,7 +69,11 @@ int lidarDistanceMaxSensor1 = 900;
 int lidarDistanceMaxSensor2 = 900;
 int cleanSensorMax;
 int dirtySensorMax;
-int duringWaterOn = 30;
+unsigned long duringWaterOn = 30;
+int waterSensorValue = 50;
+int waterSensorLevel = 50;
+boolean emailSender = true;
+String myArray[0][0];
 
 // Lidar
 // objects for the vl53l0x
@@ -80,6 +95,7 @@ void onNettoyage();
 void setDuringWaterOn();
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length);
 void getData();
+void send_email();
 
 // NTPClient horloge
 WiFiUDP ntpUDP;
@@ -141,17 +157,32 @@ void setup()
   Serial.println("Both in reset mode...(pins are low)");
   Serial.println("Starting...");
   setID();
-  // read data toute les 5 seconde
 
-  // timer.attach(1, getData);
-  timer2.attach(5, waterSensor);
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
+
+  // Init EEPROM
+
+  EEPROM.begin(32);
+
+  if (EEPROM.percentUsed() >= 0)
+  {
+    EEPROM.get(0, duringWaterOn);
+    EEPROM.get(4, lidarDistanceMaxSensor1);
+    EEPROM.get(8, lidarDistanceMaxSensor2);
+  }
+  else
+  {
+    // put some data into eeprom
+    EEPROM.put(0, duringWaterOn);
+    EEPROM.put(4, lidarDistanceMaxSensor1);
+    EEPROM.put(8, lidarDistanceMaxSensor2);
+    EEPROM.commit();
+  }
 }
 
 void loop()
 {
-
   // Si l'objet est connecté au réseau, on effectue les tâches qui doivent l'être dans ce cas
   if (WiFi.isConnected())
   {
@@ -163,19 +194,16 @@ void loop()
   heure = timeClient.getHours(); // heure
   delay(10);
   read_dual_sensors();
+  waterSensor();
   getData();
   webSocket.loop();
 
-  if (heure == heureLightDebut)
+  if (heure == 1)
   {
-    // digitalWrite(Light, HIGH);
-  }
-  if (heure == heureLightFin)
-  {
-    // digitalWrite(Light, LOW);
+    emailSender = true;
   }
 
-  if (manuel == 0)
+  if (manuel == 0 && !alert)
   {
     if (status == 1)
     {
@@ -197,7 +225,7 @@ void loop()
 
     if (status == 3)
     {
-      if (((millis() / 1000) - TEMPCHASSE) < duringWaterOn)
+      if (((millis() / 1000UL) - TEMPCHASSE) < duringWaterOn)
       {
         Serial.println("Chasse ON");
         digitalWrite(RELAY_NETOYER, LOW);
@@ -210,13 +238,8 @@ void loop()
         TEMPCHASSE = 0;
         status = 0;
         delay(10);
+        setID();
       }
-    }
-    else
-    {
-      digitalWrite(RELAY_NETOYER, HIGH);
-      TEMPCHASSE = 0;
-      delay(50);
     }
   }
 
@@ -258,6 +281,7 @@ void onNettoyage()
     {
       webServer.send(200, "text/html", "Off");
       manuel = 0;
+      setID();
     }
   }
 }
@@ -272,24 +296,28 @@ void onStopChange()
   digitalWrite(RELAY_NETOYER, HIGH);
   digitalWrite(RELAY_VIDANGE, HIGH);
   delay(50);
+  setID();
   webServer.send(200, "text/plain", "Stop");
 }
 
 void onVidangeChange()
 {
   if (webServer.hasArg("onOffVidange") == true)
-    digitalWrite(RELAY_VIDANGE, webServer.arg("onOffVidange").toInt());
-  delay(50);
   {
+    digitalWrite(RELAY_VIDANGE, webServer.arg("onOffVidange").toInt());
+    delay(50);
+
     if (webServer.arg("onOffVidange").toInt() == true)
     {
       webServer.send(200, "text/html", "On");
       manuel = 1;
+      setID();
     }
     else
     {
       webServer.send(200, "text/html", "Off");
       manuel = 0;
+      setID();
     }
   }
 }
@@ -299,12 +327,13 @@ void setDuringWaterOn()
   if (webServer.hasArg("setDuringWaterOn") == true)
   {
     duringWaterOn = webServer.arg("setDuringWaterOn").toInt();
+    EEPROM.put(0, duringWaterOn);
+    EEPROM.commit();
   }
 }
 
 void detect()
 {
-
   if (sensor1 < lidarDistanceMaxSensor1 || sensor2 < lidarDistanceMaxSensor2)
   {
     status = 1;
@@ -352,22 +381,16 @@ void setID()
     while (1)
       ;
   }
+  lox1.startRangeContinuous();
+  lox2.startRangeContinuous();
 }
 
 void read_dual_sensors()
 {
-  lox1.rangingTest(&measure1, false); // pass in 'true' to get debug data printout!
-  lox2.rangingTest(&measure2, false); // pass in 'true' to get debug data printout!
-  // print sensor one reading
-  if (measure1.RangeStatus != 4)
+  if (lox1.isRangeComplete() || lox2.isRangeComplete())
   {
-    sensor1 = medianFilter.AddValue(measure1.RangeMilliMeter);
-    detect();
-  }
-
-  if (measure2.RangeStatus != 4)
-  {
-    sensor2 = medianFilter.AddValue(measure2.RangeMilliMeter);
+    sensor1 = medianFilter.AddValue(lox1.readRange());
+    sensor2 = medianFilter.AddValue(lox2.readRange());
     detect();
   }
 }
@@ -378,45 +401,61 @@ void waterSensor()
 
   if (water_sensor.onRawValueChange())
   {
+    waterSensorValue = water_sensor.getRawValue();
+    waterSensorLevel = water_sensor.getActiveLevel();
+    if (water_sensor.getRawValue() < 10 && emailSender)
+    {
+      alert = true;
+      //send_email();
+    }
+    else
+    {
+      alert = false;
+    }
   }
-  // Serial.print("Active Level: ");
-  // Serial.print(water_sensor.getActiveLevel());
-  // Serial.print("  ---  ");
-  // Serial.print("Raw Value: ");
-  // Serial.println(water_sensor.getRawValue());
 }
 
 void getData()
 {
-  const uint8_t size = JSON_OBJECT_SIZE(200);
+  const uint8_t size = JSON_OBJECT_SIZE(11);
   StaticJsonDocument<size> json;
   json["status"] = status;
   json["duringWaterOn"] = duringWaterOn;
   json["lidarDistanceMaxSensor1"] = lidarDistanceMaxSensor1;
   json["lidarDistanceMaxSensor2"] = lidarDistanceMaxSensor2;
+  json["waterSensor"] = waterSensorValue;
+  json["waterSensorLevel"] = waterSensorLevel;
+  json["senderMail"] = emailSender;
+  json["alarme"] = alert;
+
   JsonArray data = json.createNestedArray("lidar");
   data.add(sensor1);
   data.add(sensor2);
 
-  char buffer[200];
+  char buffer[300];
   size_t len = serializeJson(json, buffer);
   webSocket.broadcastTXT(buffer, len);
 }
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
 {
+  StaticJsonDocument<200> doc;
+  DeserializationError error = deserializeJson(doc, payload);
   switch (type)
   {
   case WStype_DISCONNECTED:
-
+    // statements
     break;
   case WStype_CONNECTED:
-  {
-  }
-  break;
+    // statements
+    break;
+  case WStype_ERROR:
+    // statements
+    break;
+  case WStype_BIN:
+    // statements
+    break;
   case WStype_TEXT:
-    StaticJsonDocument<200> doc;
-    DeserializationError error = deserializeJson(doc, payload);
     if (error)
     {
       Serial.print(F("deserializeJson() failed: "));
@@ -440,7 +479,47 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length)
     {
       lidarDistanceMaxSensor2 = sensor2Maxvalue;
     }
+    delay(10);
+    EEPROM.put(0, duringWaterOn);
+    EEPROM.put(4, lidarDistanceMaxSensor1);
+    EEPROM.put(8, lidarDistanceMaxSensor2);
+    EEPROM.commit();
     // timer.attach(1, getData);
     break;
+  }
+}
+
+void send_email()
+{
+  ESP_Mail_Session session;
+  char contenu_message[100]; // ici ajusté à 100 caractères maximum
+  SMTP_Message message;
+
+  session.server.host_name = SMTP_HOST;
+  session.server.port = SMTP_PORT;
+  session.login.email = AUTHOR_EMAIL;
+  session.login.password = AUTHOR_PASSWORD;
+
+  message.sender.name = "ESP32";
+  message.sender.email = AUTHOR_EMAIL;
+  message.subject = EMAIL_TITLE;
+  message.addRecipient(RECIPIENT_NAME, RECIPIENT_EMAIL);
+
+  // construction du corps du message (inclusion d'un nombre aléatoire)
+  sprintf(contenu_message, "Le niveau de l'eau est bas", random(10000) / 100.0);
+  message.text.content = contenu_message;
+
+  message.priority = esp_mail_smtp_priority::esp_mail_smtp_priority_normal;
+
+  if (!smtp.connect(&session))
+  {
+    emailSender = false;
+    return;
+  }
+
+  if (!MailClient.sendMail(&smtp, &message))
+  {
+    emailSender = true;
+    Serial.println("Erreur lors de l'envoi du email, " + smtp.errorReason());
   }
 }
