@@ -3,9 +3,6 @@
 #include <ESP8266WebServer.h>
 #include <WebSocketsServer.h>
 #include <Adafruit_VL53L0X.h>
-#include <RBD_Capacitance.h>
-#include <RBD_Threshold.h>
-#include <RBD_WaterSensor.h>
 #include "ArduinoOTA.h"
 #include <NTPClient.h>
 #include <Ticker.h>
@@ -24,7 +21,7 @@ void onConnected(const WiFiEventStationModeConnected &event);
 void onGotIP(const WiFiEventStationModeGotIP &event);
 ESP8266WebServer webServer(80);
 
-RBD::WaterSensor water_sensor(13, 15, 3); // send, receive pin, levels
+#define WATER_SENSOR_SIGNAL_PIN A0
 
 WebSocketsServer webSocket = WebSocketsServer(81);
 // Memory
@@ -70,9 +67,9 @@ int lidarDistanceMaxSensor2 = 900;
 int cleanSensorMax;
 int dirtySensorMax;
 unsigned long duringWaterOn = 30;
-int waterSensorValue = 50;
-int waterSensorLevel = 50;
-boolean emailSender = true;
+boolean hasWater = false;
+boolean waterSensorOn = false;
+boolean emailSender = false;
 String myArray[0][0];
 
 // Lidar
@@ -129,12 +126,6 @@ void setup()
 
   webServer.begin();
 
-  // water sensor
-  water_sensor.setLevel(1, 120);
-  water_sensor.setLevel(2, 154);
-  water_sensor.setLevel(3, 187);
-  water_sensor.setMaxLevel(220);
-
   pinMode(RELAY_NETOYER, OUTPUT);
   pinMode(RELAY_VIDANGE, OUTPUT);
   digitalWrite(RELAY_NETOYER, HIGH);
@@ -179,6 +170,7 @@ void setup()
     EEPROM.put(8, lidarDistanceMaxSensor2);
     EEPROM.commit();
   }
+  waterSensor();
 }
 
 void loop()
@@ -194,8 +186,10 @@ void loop()
   heure = timeClient.getHours(); // heure
   delay(10);
   read_dual_sensors();
-  waterSensor();
-  getData();
+  if (waterSensorOn){
+    waterSensor();
+  }
+    getData();
   webSocket.loop();
 
   if (heure == 1)
@@ -229,6 +223,7 @@ void loop()
       {
         Serial.println("Chasse ON");
         digitalWrite(RELAY_NETOYER, LOW);
+        waterSensorOn= true;
         delay(10);
       }
       else
@@ -237,6 +232,7 @@ void loop()
         digitalWrite(RELAY_NETOYER, HIGH);
         TEMPCHASSE = 0;
         status = 0;
+        waterSensorOn = false;
         delay(10);
         setID();
       }
@@ -276,11 +272,13 @@ void onNettoyage()
     {
       webServer.send(200, "text/html", "On");
       manuel = 1;
+      waterSensorOn = true;
     }
     else
     {
       webServer.send(200, "text/html", "Off");
       manuel = 0;
+      waterSensorOn = false;
       setID();
     }
   }
@@ -397,21 +395,20 @@ void read_dual_sensors()
 
 void waterSensor()
 {
-  water_sensor.update();
-
-  if (water_sensor.onRawValueChange())
+  int valWaterSensor = analogRead(WATER_SENSOR_SIGNAL_PIN);
+  if (valWaterSensor < 10)
   {
-    waterSensorValue = water_sensor.getRawValue();
-    waterSensorLevel = water_sensor.getActiveLevel();
-    if (water_sensor.getRawValue() < 10 && emailSender)
-    {
-      alert = true;
-      //send_email();
-    }
-    else
-    {
-      alert = false;
-    }
+    hasWater = false;
+    alert = true;
+    // of pompe
+    digitalWrite(RELAY_NETOYER, HIGH);
+    delay(10);
+    send_email();
+  }
+  else
+  {
+    alert = false;
+    hasWater = true;
   }
 }
 
@@ -423,8 +420,7 @@ void getData()
   json["duringWaterOn"] = duringWaterOn;
   json["lidarDistanceMaxSensor1"] = lidarDistanceMaxSensor1;
   json["lidarDistanceMaxSensor2"] = lidarDistanceMaxSensor2;
-  json["waterSensor"] = waterSensorValue;
-  json["waterSensorLevel"] = waterSensorLevel;
+  json["waterSensor"] = hasWater;
   json["senderMail"] = emailSender;
   json["alarme"] = alert;
 

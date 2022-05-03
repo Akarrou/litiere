@@ -125,32 +125,27 @@
                             oninput="sensor2MaxValueChange(this.value)">
                     </div>
                 </div>
-                <div class="d-flex flex-column m-3 align-items-center">
-                    <span>Temps de nettoyage</span>
-                    <span id="tempMaxvalue">0</span>
-                    <input type="range"
-                        id="tempMax"
-                        min="10"
-                        max="240"
-                        step="30"
-                        oninput="tempMaxValueChange(this.value)">
-                </div>
-                <div class="d-flex flex-column m-3 align-items-center">
-                    <span>Niveau de l'eau</span>
-                    <span id="waterSensorValue">0</span>
-                    <span id="waterSensorLevel">0</span>
-                    <div class="progress">
-                        <div class="progress-bar bg-success"
-                            id="waterSensor"
-                            role="progressbar"
-                            style="width: 25%"
-                            aria-valuenow="25"
-                            aria-valuemin="0"
-                            aria-valuemax="100">
-                        </div>
-                    </div>
-                </div>
             </div>
+            <div class="d-flex flex-column m-3 align-items-center">
+                <span>Temps de nettoyage</span>
+                <span id="tempMaxvalue">0</span>
+                <input type="range"
+                    id="tempMax"
+                    min="10"
+                    max="240"
+                    step="10"
+                    oninput="tempMaxValueChange(this.value)">
+            </div>
+            <div class="d-flex">
+                <span class="p-1">Niveau de l'eau: </span>
+            </div>
+            <div #waterSensor
+                class="alert alert-danger"
+                id="waterSensor"
+                role="alert">
+                Niveau de l'eau Ok
+            </div>
+
         </div>
         </div>
 
@@ -169,9 +164,13 @@
                     document.getElementById("sensor1Max").value = data.lidarDistanceMaxSensor1
                     document.getElementById("sensor2Max").value = data.lidarDistanceMaxSensor2
                     document.getElementById("tempMax").value = data.duringWaterOn
-                    document.getElementById("waterSensorValue").innerHTML = data.waterSensor
-                    document.getElementById("waterSensorLevel").innerHTML = data.waterSensorLevel
-                    //document.getElementById("waterSensor").style.width = data.waterSensor + "%"
+                    if (data.waterSensor) {
+                        document.getElementById("waterSensor").innerHTML = "Niveau d'eau Ok"
+                         document.getElementById("waterSensor").classList.replace('alert-danger', 'alert-success')
+                    } else {
+                        document.getElementById("waterSensor").innerHTML = "Niveau d'eau BAS"
+                        document.getElementById("waterSensor").classList.replace('alert-success', 'alert-danger')
+                    }
                     console.table(data)
                 }
             }
