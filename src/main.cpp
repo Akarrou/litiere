@@ -1,6 +1,6 @@
 #include "Arduino.h"
-#include "ESP8266WiFi.h"
-#include <ESP8266WebServer.h>
+#include <WiFi.h>
+#include <WebServer.h> // Librairie WebServer.h
 #include <WebSocketsServer.h>
 #include <Adafruit_VL53L0X.h>
 #include "ArduinoOTA.h"
@@ -9,19 +9,30 @@
 #include <ArduinoJson.h>
 #include "MedianFilterLib.h"
 #include <index.h>
-#include <ESP_EEPROM.h>
+#include <EEPROM.h>
 #include <ESP_Mail_Client.h>
+#include <Firebase_ESP_Client.h>
+#include <addons/TokenHelper.h>
+#include <addons/RTDBHelper.h>
+#include <ESP32AnalogRead.h>
 
 MedianFilter<int> medianFilter(5);
 
 // Gestion des événements du WiFi
-const char *SSID = "Livebox-5576";
-const char *PASSWORD = "RaLvkqAaWUrMcAWmSm";
-void onConnected(const WiFiEventStationModeConnected &event);
-void onGotIP(const WiFiEventStationModeGotIP &event);
-ESP8266WebServer webServer(80);
+const char *SSID = "Livebox-7600_2.4GHz";
+const char *PASSWORD = "QTRt4Y3F2i3dJHEwkM";
 
-#define WATER_SENSOR_SIGNAL_PIN A0
+WebServer webServer(80);
+// Set your Static IP address
+IPAddress local_IP(192, 168, 1, 184);
+// Set your Gateway IP address
+IPAddress gateway(192, 168, 1, 1);
+
+IPAddress subnet(255, 255, 0, 0);
+IPAddress primaryDNS(8, 8, 8, 8);   // optional
+IPAddress secondaryDNS(8, 8, 4, 4); // optional
+
+ESP32AnalogRead WATER_SENSOR_SIGNAL_PIN;
 
 WebSocketsServer webSocket = WebSocketsServer(81);
 // Memory
@@ -35,14 +46,29 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 #define LOX2_ADDRESS 0x31
 int sensor1, sensor2 = 1;
 // set the pins to shutdown
-#define SHT_LOX1 16
-#define SHT_LOX2 12
+#define SHT_LOX1 17
+#define SHT_LOX2 16
 
 // identification du compte email utilisé pour l'envoi
 #define SMTP_HOST "smtp.gmail.com"
 #define SMTP_PORT 465
 #define AUTHOR_EMAIL "valettejerome31@gmail.com"
 #define AUTHOR_PASSWORD "Hyna.321"
+
+#define API_KEY "AIzaSyCNp5y5Qhs9n6SXI06CGI8fniae_FDmmKY"
+#define DATABASE_URL "https://litiere-default-rtdb.europe-west1.firebasedatabase.app/"
+#define USER_EMAIL "valettejerome31@gmail.com"
+#define USER_PASSWORD "Hyna.321"
+
+FirebaseData fbdo;
+
+FirebaseAuth auth;
+FirebaseConfig config;
+bool signupOK = false;
+
+unsigned long sendDataPrevMillis = 0;
+
+unsigned long count = 0;
 
 // identification du destinataire
 #define RECIPIENT_NAME "jerome valette"
@@ -52,7 +78,7 @@ int sensor1, sensor2 = 1;
 SMTPSession smtp;
 
 const int TEMPO = 60;
-int manuel = 0;
+boolean manuel = false;
 boolean alert = false;
 long TOP_CHRONO = 0;
 unsigned long TEMPCHASSE = 0;
@@ -70,7 +96,12 @@ unsigned long duringWaterOn = 30;
 boolean hasWater = false;
 boolean waterSensorOn = false;
 boolean emailSender = false;
-String myArray[0][0];
+boolean isDetect = true;
+
+String timeWaterOn;
+int valWaterSensor;
+int memorySensor1;
+int memorySensor2;
 
 // Lidar
 // objects for the vl53l0x
@@ -79,7 +110,6 @@ Adafruit_VL53L0X lox2 = Adafruit_VL53L0X();
 // this holds the measurement
 VL53L0X_RangingMeasurementData_t measure1;
 VL53L0X_RangingMeasurementData_t measure2;
-
 // Consrtuctor
 void handleRoot();
 void setID();
@@ -93,10 +123,41 @@ void setDuringWaterOn();
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length);
 void getData();
 void send_email();
+void dataBase(boolean end);
+String getDate();
+void detectOff();
 
 // NTPClient horloge
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 60000);
+String weekDays[7] = {"Dimanche", "Lundi", "Mardi", "Mercredi", "jeudi", "vendredi", "samedi"};
+String months[12] = {"Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin", "Juiller", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"};
+
+void initWifi()
+{
+  // Nom de l'objet OTA
+  ArduinoOTA.setHostname("Litiere");
+  ArduinoOTA.setPassword("test");
+  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS))
+  {
+    Serial.println("STA Failed to configure");
+  }
+  WiFi.begin(SSID, PASSWORD);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void analogicSetup()
+{
+  WATER_SENSOR_SIGNAL_PIN.attach(33);
+}
 
 void setup()
 {
@@ -104,19 +165,8 @@ void setup()
   Serial.begin(115200);
   delay(100);
 
-  // Nom de l'objet OTA
-  ArduinoOTA.setHostname("Litiere");
-  ArduinoOTA.setPassword("test");
-
   // Mode de connexion
-  WiFi.mode(WIFI_STA);
-  WiFi.softAP("Litiere");
-
-  // Démarrage de la connexion
-  WiFi.begin(SSID, PASSWORD);
-
-  static WiFiEventHandler onConnectedHandler = WiFi.onStationModeConnected(onConnected);
-  static WiFiEventHandler onGotIPHandler = WiFi.onStationModeGotIP(onGotIP);
+  initWifi();
 
   webServer.on("/", handleRoot);
   webServer.on("/nettoyage", onNettoyage);
@@ -156,7 +206,7 @@ void setup()
 
   EEPROM.begin(32);
 
-  if (EEPROM.percentUsed() >= 0)
+  if (EEPROM.length() == 0)
   {
     EEPROM.get(0, duringWaterOn);
     EEPROM.get(4, lidarDistanceMaxSensor1);
@@ -170,13 +220,39 @@ void setup()
     EEPROM.put(8, lidarDistanceMaxSensor2);
     EEPROM.commit();
   }
-  waterSensor();
+  // waterSensor();
+
+  Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
+
+  /* Assign the api key (required) */
+  config.api_key = API_KEY;
+
+  /* Assign the user sign in credentials */
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+  /* Assign the RTDB URL (required) */
+  config.database_url = DATABASE_URL;
+
+  /* Assign the callback function for the long running token generation task */
+  config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
+
+  // Or use legacy authenticate method
+  // config.database_url = DATABASE_URL;
+  // config.signer.tokens.legacy_token = "<database secret>";
+
+  Firebase.begin(&config, &auth);
+
+  // Comment or pass false value when WiFi reconnection will control by your code or third party library
+  Firebase.reconnectWiFi(true);
+
+  analogicSetup();
 }
 
 void loop()
 {
   // Si l'objet est connecté au réseau, on effectue les tâches qui doivent l'être dans ce cas
-  if (WiFi.isConnected())
+  if (WiFi.status() == WL_CONNECTED)
   {
     webServer.handleClient();
     ArduinoOTA.begin();
@@ -185,11 +261,20 @@ void loop()
   delay(10);
   heure = timeClient.getHours(); // heure
   delay(10);
-  read_dual_sensors();
-  if (waterSensorOn){
-    waterSensor();
+
+  if (isDetect == true)
+  {
+    read_dual_sensors();
   }
-    getData();
+
+  if (waterSensorOn)
+  {
+    // waterSensor();
+  }
+  // Serial.println("Voltage = " + String(WATER_SENSOR_SIGNAL_PIN.readMiliVolts()));
+
+  getData();
+
   webSocket.loop();
 
   if (heure == 1)
@@ -197,13 +282,15 @@ void loop()
     emailSender = true;
   }
 
-  if (manuel == 0 && !alert)
+  if (!manuel && !alert && (heure <= 21 && heure >= 7))
   {
+    boolean onePass;
     if (status == 1)
     {
       TOP_CHRONO = (millis() / 1000);
       status = 2;
-      delay(10);
+      detectOff();
+      delay(50);
     }
 
     if (status == 2)
@@ -213,7 +300,8 @@ void loop()
         status = 3;
         TEMPCHASSE = (millis() / 1000);
         TOP_CHRONO = 0;
-        delay(10);
+        onePass = true;
+        delay(50);
       }
     }
 
@@ -221,40 +309,32 @@ void loop()
     {
       if (((millis() / 1000UL) - TEMPCHASSE) < duringWaterOn)
       {
-        Serial.println("Chasse ON");
         digitalWrite(RELAY_NETOYER, LOW);
-        waterSensorOn= true;
-        delay(10);
+        waterSensorOn = true;
+        delay(50);
+
+        if (onePass == true)
+        {
+          dataBase(false);
+          onePass = false;
+          delay(50);
+        }
       }
       else
       {
-        Serial.println("Chasse OFF");
-        digitalWrite(RELAY_NETOYER, HIGH);
         TEMPCHASSE = 0;
         status = 0;
         waterSensorOn = false;
-        delay(10);
         setID();
+        dataBase(true);
+        digitalWrite(RELAY_NETOYER, HIGH);
+        delay(50);
       }
     }
   }
 
   // ArduinoOTA...
   ArduinoOTA.handle();
-}
-
-void onConnected(const WiFiEventStationModeConnected &event)
-{
-  Serial.println("WiFi connecté");
-}
-
-void onGotIP(const WiFiEventStationModeGotIP &event)
-{
-  Serial.println("Adresse IP : " + WiFi.localIP().toString());
-  Serial.println("Passerelle IP : " + WiFi.gatewayIP().toString());
-  Serial.println("DNS IP : " + WiFi.dnsIP().toString());
-  Serial.print("Puissance de réception : ");
-  Serial.println(WiFi.RSSI());
 }
 
 void handleRoot()
@@ -271,13 +351,14 @@ void onNettoyage()
     if (webServer.arg("onOffNettoyage").toInt() == false)
     {
       webServer.send(200, "text/html", "On");
-      manuel = 1;
+      manuel = true;
       waterSensorOn = true;
+      detectOff();
     }
     else
     {
       webServer.send(200, "text/html", "Off");
-      manuel = 0;
+      manuel = false;
       waterSensorOn = false;
       setID();
     }
@@ -289,7 +370,7 @@ void onStopChange()
   status = 0;
   TEMPCHASSE = 0;
   TOP_CHRONO = 0;
-  manuel = 0;
+  manuel = false;
   presence = 0;
   digitalWrite(RELAY_NETOYER, HIGH);
   digitalWrite(RELAY_VIDANGE, HIGH);
@@ -308,13 +389,13 @@ void onVidangeChange()
     if (webServer.arg("onOffVidange").toInt() == true)
     {
       webServer.send(200, "text/html", "On");
-      manuel = 1;
-      setID();
+      manuel = true;
+      detectOff();
     }
     else
     {
       webServer.send(200, "text/html", "Off");
-      manuel = 0;
+      manuel = false;
       setID();
     }
   }
@@ -336,7 +417,8 @@ void detect()
   {
     status = 1;
     presence = 1;
-    Serial.println("Y a quelque chose");
+    memorySensor1 = sensor1;
+    memorySensor2 = sensor2;
   }
   else
   {
@@ -381,6 +463,7 @@ void setID()
   }
   lox1.startRangeContinuous();
   lox2.startRangeContinuous();
+  isDetect = true;
 }
 
 void read_dual_sensors()
@@ -389,13 +472,22 @@ void read_dual_sensors()
   {
     sensor1 = medianFilter.AddValue(lox1.readRange());
     sensor2 = medianFilter.AddValue(lox2.readRange());
-    detect();
+    if (sensor1 > 60000 || sensor2 > 60000)
+    {
+      setID();
+    }
+    else
+    {
+      detect();
+    }
   }
 }
 
 void waterSensor()
 {
-  int valWaterSensor = analogRead(WATER_SENSOR_SIGNAL_PIN);
+
+  valWaterSensor = WATER_SENSOR_SIGNAL_PIN.readVoltage();
+
   if (valWaterSensor < 10)
   {
     hasWater = false;
@@ -410,11 +502,21 @@ void waterSensor()
     alert = false;
     hasWater = true;
   }
+  alert = false;
+  hasWater = true;
+}
+
+void detectOff()
+{
+  digitalWrite(SHT_LOX1, LOW);
+  digitalWrite(SHT_LOX2, LOW);
+  isDetect = false;
+  delay(10);
 }
 
 void getData()
 {
-  const uint8_t size = JSON_OBJECT_SIZE(11);
+  const uint8_t size = JSON_OBJECT_SIZE(12);
   StaticJsonDocument<size> json;
   json["status"] = status;
   json["duringWaterOn"] = duringWaterOn;
@@ -518,4 +620,41 @@ void send_email()
     emailSender = true;
     Serial.println("Erreur lors de l'envoi du email, " + smtp.errorReason());
   }
+}
+
+void dataBase(boolean end)
+{
+
+  if (Firebase.ready() && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0) && end == true)
+  {
+    sendDataPrevMillis = millis();
+
+    FirebaseJson json;
+    json.setDoubleDigits(3);
+    json.add("date", getDate());
+    json.add("time", timeWaterOn + ", " + timeClient.getFormattedTime());
+    json.add("sensor1Value", memorySensor1);
+    json.add("sensor2Value", memorySensor2);
+    json.add("hasWater", hasWater + ", value: " + valWaterSensor);
+
+    Firebase.RTDB.pushJSON(&fbdo, "/litiere/json", &json);
+  }
+  else
+  {
+    timeWaterOn = timeClient.getFormattedTime();
+    memorySensor1 = sensor1;
+    memorySensor2 = sensor2;
+  }
+}
+
+String getDate()
+{
+  unsigned long epochTime = timeClient.getEpochTime();
+  struct tm *ptm = gmtime((time_t *)&epochTime);
+  int monthDay = ptm->tm_mday;
+  int currentMonth = ptm->tm_mon + 1;
+  String currentMonthName = months[currentMonth - 1];
+  int currentYear = ptm->tm_year + 1900;
+
+  return String(monthDay) + "/" + String(currentMonth) + "/" + String(currentYear);
 }
